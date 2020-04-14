@@ -1,9 +1,3 @@
-*.swp
-*.swo
-*.pyc
 *.torrent
-venv
-*.pdf
-*.pcapng
-__pycache__
 *.pyc
+*.DS_Store

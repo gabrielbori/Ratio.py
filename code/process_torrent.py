@@ -9,20 +9,21 @@ import logging
 import random
 from tqdm import tqdm
 from time import sleep
-
+import sys
 from struct import unpack
 
 logging.basicConfig(level=logging.DEBUG)
-
+limit = 0
 class process_torrent():
-
     def __init__(self, configuration):
         self.configuration = configuration
         self.open_torrent()
         self.torrentclient = Transmission292(self.tracker_info_hash())
 
     def open_torrent(self):
+        global limit
         torrent_file = self.configuration['torrent']
+        limit = self.configuration['limit']
         with open(torrent_file, 'rb') as tf:
             data = tf.read()
         self.b_enc = bencoding()
@@ -69,6 +70,7 @@ class process_torrent():
         b_enc = bencoding()
         response = b_enc.bdecode(tr_response)
         print('----------- Received Tracker Response --------')
+
         print(pretty_data(response))
         raw_peers = b_enc.get_dict('peers')
         i = 0
@@ -94,6 +96,8 @@ class process_torrent():
         pbar.close()
 
     def tracker_process(self):
+        seeded = 0
+        global limit
         while True:
             self.tracker_start_request()
 
@@ -104,7 +108,6 @@ class process_torrent():
             max_up = self.interval
             randomize_upload = random.randint(min_up, max_up)
             uploaded = int(self.configuration['upload'])*1000*randomize_upload
-
             # get download
             downloaded = 0
 
@@ -114,5 +117,13 @@ class process_torrent():
                                   downloaded=downloaded,
                                   event='stopped')
             content = self.send_request(params, headers)
+            seeded = seeded + uploaded/1000000
+            print('<<<<<<>>>>>>>>>')
+            print('Seeded : ' + str(seeded) +'Mb')
+            print('Limit : '+str(limit))
+            print('<<<<<<>>>>>>>>>')
+
+            if seeded >= limit :
+                sys.exit()
             self.tracker_response_parser(content)
             self.wait()
