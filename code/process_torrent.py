@@ -12,7 +12,7 @@ from time import sleep
 import sys
 from struct import unpack
 
-logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
 limit = 0
 class process_torrent():
     def __init__(self, configuration):
@@ -33,7 +33,7 @@ class process_torrent():
             self.info['length'] = 0
             for file in self.info['files']:
                 self.info['length'] += file['length']
-            print(pretty_data(self.info['files']))
+            #print(pretty_data(self.info['files']))
 
     def tracker_info_hash(self):
         raw_info = self.b_enc.get_dict('info')
@@ -45,7 +45,7 @@ class process_torrent():
 
     def send_request(self, params, headers):
         url = self.metainfo['announce']
-        print(pretty_GET(url, headers, params))
+        #print(pretty_GET(url, headers, params))
         while True:
             try:
                 r = requests.get(url, params=params, headers=headers)
@@ -71,7 +71,7 @@ class process_torrent():
         response = b_enc.bdecode(tr_response)
         print('----------- Received Tracker Response --------')
 
-        print(pretty_data(response))
+        #print(pretty_data(response))
         raw_peers = b_enc.get_dict('peers')
         i = 0
         peers = []
@@ -116,9 +116,10 @@ class process_torrent():
             params = tc.get_query(uploaded=uploaded,
                                   downloaded=downloaded,
                                   event='stopped')
-            content = self.send_request(params, headers)
+            #content = self.send_request(params, headers)
             seeded = seeded + uploaded/1000000
             print('<<<<<<>>>>>>>>>')
+            print('Torrent : '+self.configuration['torrent'])
             print('Seeded : ' + str(seeded) +'Mb')
             print('Limit : '+str(limit))
             print('<<<<<<>>>>>>>>>')
