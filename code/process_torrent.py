@@ -116,7 +116,7 @@ class process_torrent():
             params = tc.get_query(uploaded=uploaded,
                                   downloaded=downloaded,
                                   event='stopped')
-            #content = self.send_request(params, headers)
+            content = self.send_request(params, headers)
             seeded = seeded + uploaded/1000000
             print('<<<<<<>>>>>>>>>')
             print('Torrent : '+self.configuration['torrent'])
