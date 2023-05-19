@@ -1,5 +1,14 @@
 {
-    "torrent": ".TORRENTFILE",
-    "upload": "10",
-    "limit": 1600.0
+    "torrents": [
+      {
+        "torrent": "legendupdate1.torrent",
+        "upload": "1",
+        "limit": 50
+      },
+       {
+        "torrent": "metroidtorrent.torrent",
+        "upload": "1",
+        "limit": 50
+      }
+    ]
  }
