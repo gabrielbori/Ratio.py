@@ -97,7 +97,7 @@ class process_torrent():
 
     def tracker_process(self):
         seeded = 0
-        global limit
+        limit = self.configuration['limit']
         while True:
             self.tracker_start_request()
 
