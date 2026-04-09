@@ -1,14 +1,14 @@
 {
     "torrents": [
       {
-        "torrent": "legendupdate1.torrent",
-        "upload": "1",
-        "limit": 50
+        "torrent": "Pokemon.Scarlet.NSW-NiiNTENDO.torrent",
+        "upload": "300",
+        "limit": 16000
       },
        {
-        "torrent": "metroidtorrent.torrent",
-        "upload": "1",
-        "limit": 50
+        "torrent": "Pokemon.Scarlet.Update.v4.0.0.NSW-SUXXORS.torrent",
+        "upload": "300",
+        "limit": 12000
       }
     ]
  }

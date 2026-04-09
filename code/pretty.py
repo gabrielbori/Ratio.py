@@ -19,7 +19,7 @@ def pretty_GET(url, headers, params):
                             )
     )
     if prepared.body:
-        pi += prepared.body
+        p += prepared.body
     p += '------END------'
     return p
 

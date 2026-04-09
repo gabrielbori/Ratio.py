@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ratio.py - Torrent Ratio Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Ratio.py</h1>
+        <p class="subtitle">Torrent Ratio Manager</p>
+
+        <div class="card">
+            <h2>Overview</h2>
+            <div style="max-width:280px;margin:0 auto">
+                <canvas id="progressChart"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Add Torrent</h2>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="torrentFile">Select Torrent File(s)</label>
+                    <input type="file" id="torrentFile" accept=".torrent" multiple>
+                </div>
+            </div>
+            <div id="fileConfigList"></div>
+            <div id="formMessage" class="message"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Torrents</h2>
+                <button class="btn btn-stop" onclick="stopAll()">Stop All</button>
+            </div>
+            <div id="torrentList">
+                <p class="empty-state">No torrents added yet.</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Saved Progress</h2>
+                <button class="btn btn-start" onclick="resumeAllPending()">Resume All Pending</button>
+            </div>
+            <div id="progressList">
+                <p class="empty-state">No saved progress.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const formMessage = document.getElementById('formMessage');
+        const fileInput = document.getElementById('torrentFile');
+        const fileConfigList = document.getElementById('fileConfigList');
+        let selectedFiles = [];
+
+        fileInput.addEventListener('change', async () => {
+            selectedFiles = Array.from(fileInput.files);
+            if (!selectedFiles.length) {
+                fileConfigList.innerHTML = '';
+                return;
+            }
+
+            let html = `<table class="config-table">
+                <thead><tr>
+                    <th>File</th>
+                    <th>Speed (kB/s)</th>
+                    <th>Limit (GB)</th>
+                    <th></th>
+                </tr></thead><tbody>`;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const name = selectedFiles[i].name;
+                html += `<tr>
+                    <td class="name-cell" title="${name}">${name}</td>
+                    <td><input type="number" class="cfg-speed" data-idx="${i}" value="300" min="1"></td>
+                    <td><input type="number" class="cfg-limit" data-idx="${i}" value="10" min="0.1" step="0.1"></td>
+                    <td class="actions">
+                        <button class="btn btn-add" onclick="addSingle(${i})">Add</button>
+                        <button class="btn btn-remove" onclick="removeFromList(${i})">X</button>
+                    </td>
+                </tr>`;
+            }
+
+            html += `</tbody></table>`;
+            if (selectedFiles.length > 1) {
+                html += `<div style="margin-top:10px"><button class="btn btn-add" onclick="addAll()">Add All</button></div>`;
+            }
+            fileConfigList.innerHTML = html;
+
+            // Pre-load saved limits
+            for (let i = 0; i < selectedFiles.length; i++) {
+                try {
+                    const res = await fetch('/api/progress/lookup?filename=' + encodeURIComponent(selectedFiles[i].name));
+                    const data = await res.json();
+                    if (data.limit_mb) {
+                        const limitInput = document.querySelector(`.cfg-limit[data-idx="${i}"]`);
+                        if (limitInput) limitInput.value = (data.limit_mb / 1024).toFixed(1);
+                    }
+                } catch (err) {}
+            }
+        });
+
+        function removeFromList(idx) {
+            const row = document.querySelector(`.cfg-speed[data-idx="${idx}"]`).closest('tr');
+            row.remove();
+            selectedFiles[idx] = null;
+            // Hide "Add All" if no rows left
+            const remaining = selectedFiles.filter(f => f !== null);
+            if (remaining.length === 0) {
+                fileConfigList.innerHTML = '';
+                fileInput.value = '';
+            }
+        }
+
+        async function addSingle(idx) {
+            const file = selectedFiles[idx];
+            if (!file) return;
+            const speed = document.querySelector(`.cfg-speed[data-idx="${idx}"]`).value;
+            const limit = document.querySelector(`.cfg-limit[data-idx="${idx}"]`).value;
+
+            const formData = new FormData();
+            formData.append('torrent', file);
+            formData.append('upload_speed', speed);
+            formData.append('limit', Math.round(parseFloat(limit) * 1024));
+
+            try {
+                const res = await fetch('/api/torrents', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (res.ok) {
+                    showMessage(`Added ${file.name}`, 'success');
+                    const row = document.querySelector(`.cfg-speed[data-idx="${idx}"]`).closest('tr');
+                    row.style.opacity = '0.4';
+                    row.querySelector('.btn').disabled = true;
+                    refreshTorrents();
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            } catch (err) {
+                showMessage('Failed to add torrent', 'error');
+            }
+        }
+
+        async function addAll() {
+            for (let i = 0; i < selectedFiles.length; i++) {
+                if (!selectedFiles[i]) continue;
+                const row = document.querySelector(`.cfg-speed[data-idx="${i}"]`);
+                if (!row || row.closest('tr').style.opacity === '0.4') continue;
+                await addSingle(i);
+            }
+        }
+
+        function showMessage(text, type) {
+            formMessage.textContent = text;
+            formMessage.className = 'message ' + type;
+            setTimeout(() => { formMessage.textContent = ''; formMessage.className = 'message'; }, 3000);
+        }
+
+        async function resumeTorrent(torrentName, limitMb) {
+            const speed = prompt('Upload speed (kB/s):', '300');
+            if (!speed) return;
+            try {
+                const res = await fetch('/api/torrents/resume', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        torrent_name: torrentName,
+                        upload_speed: parseInt(speed),
+                        limit: limitMb
+                    })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showMessage('Torrent resumed', 'success');
+                    refreshTorrents();
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            } catch (err) {
+                showMessage('Failed to resume torrent', 'error');
+            }
+        }
+
+        async function deleteProgress(name) {
+            try {
+                await fetch('/api/progress/' + encodeURIComponent(name), { method: 'DELETE' });
+                refreshProgress();
+            } catch (err) {
+                showMessage('Failed to delete progress', 'error');
+            }
+        }
+
+        async function stopAll() {
+            try {
+                const res = await fetch('/api/torrents/stop-all', { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message, 'success');
+                refreshTorrents();
+            } catch (err) {
+                showMessage('Failed to stop all', 'error');
+            }
+        }
+
+        async function resumeAllPending() {
+            const speed = prompt('Upload speed (kB/s) for all:', '300');
+            if (!speed) return;
+            try {
+                const res = await fetch('/api/progress/resume-all', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ upload_speed: parseInt(speed) })
+                });
+                const data = await res.json();
+                showMessage(data.message, 'success');
+                refreshTorrents();
+            } catch (err) {
+                showMessage('Failed to resume all', 'error');
+            }
+        }
+
+        async function action(url, method = 'POST') {
+            try {
+                await fetch(url, { method });
+                refreshTorrents();
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function refreshTorrents() {
+            try {
+                const res = await fetch('/api/torrents');
+                const torrents = await res.json();
+                const container = document.getElementById('torrentList');
+
+                if (torrents.length === 0) {
+                    container.innerHTML = '<p class="empty-state">No torrents added yet.</p>';
+                    return;
+                }
+
+                let html = `<table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Speed</th>
+                            <th>Seeded</th>
+                            <th>Limit</th>
+                            <th>Progress</th>
+                            <th>State</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+                for (const t of torrents) {
+                    const pct = t.limit_mb > 0 ? Math.min(100, (t.seeded_mb / t.limit_mb * 100)).toFixed(1) : 0;
+                    const isActive = ['running', 'waiting', 'connecting', 'seeding', 'starting'].includes(t.state);
+                    const stateClass = isActive ? 'state-running' :
+                                       t.state === 'finished' ? 'state-finished' :
+                                       t.state === 'error' ? 'state-error' : 'state-idle';
+
+                    const seededGb = (t.seeded_mb / 1024).toFixed(2);
+                    const limitGb = (t.limit_mb / 1024).toFixed(2);
+                    const previousNote = t.already_seeded > 0 ? ` (${(t.already_seeded / 1024).toFixed(2)} prev)` : '';
+
+                    // Wait countdown
+                    let stateLabel = t.state;
+                    if (t.state === 'waiting' && t.wait_remaining > 0) {
+                        const mins = Math.floor(t.wait_remaining / 60);
+                        const secs = t.wait_remaining % 60;
+                        stateLabel = `waiting ${mins}m ${secs}s`;
+                    } else if (t.state === 'error') {
+                        stateLabel = t.last_error ? `error: ${t.last_error.substring(0, 40)}` : 'error';
+                    }
+
+                    html += `<tr>
+                        <td class="name-cell" title="${t.torrent_name}">${t.torrent_name}</td>
+                        <td>${t.upload_speed} kB/s</td>
+                        <td>${seededGb} GB${previousNote}</td>
+                        <td>${limitGb} GB</td>
+                        <td>
+                            <div class="progress-bar">
+                                <div class="progress-fill ${stateClass}" style="width: ${pct}%"></div>
+                                <span class="progress-text">${pct}%</span>
+                            </div>
+                        </td>
+                        <td><span class="state ${stateClass}">${stateLabel}</span></td>
+                        <td class="actions">`;
+
+                    if (t.state === 'idle' || t.state === 'stopped' || t.state === 'error') {
+                        html += `<button class="btn btn-start" onclick="action('/api/torrents/${t.id}/start')">Start</button>`;
+                    }
+                    if (isActive) {
+                        html += `<button class="btn btn-stop" onclick="action('/api/torrents/${t.id}/stop')">Stop</button>`;
+                    }
+                    if (t.state === 'waiting') {
+                        html += `<button class="btn btn-add" onclick="action('/api/torrents/${t.id}/force')">Force Seed</button>`;
+                    }
+                    html += `<button class="btn btn-reset" onclick="action('/api/torrents/${t.id}/reset')">Reset</button>`;
+                    html += `<button class="btn btn-remove" onclick="action('/api/torrents/${t.id}', 'DELETE')">Remove</button>`;
+                    html += `</td></tr>`;
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function refreshProgress() {
+            try {
+                const res = await fetch('/api/progress');
+                const progress = await res.json();
+                const container = document.getElementById('progressList');
+                const keys = Object.keys(progress);
+
+                if (keys.length === 0) {
+                    container.innerHTML = '<p class="empty-state">No saved progress.</p>';
+                    return;
+                }
+
+                let html = '<table><thead><tr><th>Torrent</th><th>Seeded</th><th>Limit</th><th>Last Updated</th><th>Actions</th></tr></thead><tbody>';
+                for (const name of keys) {
+                    const p = progress[name];
+                    const date = new Date(p.last_updated).toLocaleString();
+                    const resumeBtn = p.has_file
+                        ? `<button class="btn btn-start" onclick="resumeTorrent('${name}', ${p.limit_mb})">Resume</button>`
+                        : '<span class="state state-idle">file missing</span>';
+                    const deleteBtn = `<button class="btn btn-remove" onclick="deleteProgress('${name}')">Remove</button>`;
+                    html += `<tr>
+                        <td class="name-cell" title="${name}">${name}</td>
+                        <td>${(p.seeded_mb / 1024).toFixed(2)} GB</td>
+                        <td>${(p.limit_mb / 1024).toFixed(2)} GB</td>
+                        <td>${date}</td>
+                        <td class="actions">${resumeBtn} ${deleteBtn}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        let progressChart = null;
+
+        function refreshChart() {
+            fetch('/api/progress').then(r => r.json()).then(progress => {
+                const keys = Object.keys(progress);
+                if (!keys.length) {
+                    if (progressChart) { progressChart.destroy(); progressChart = null; }
+                    return;
+                }
+
+                let totalSeeded = 0;
+                let totalPending = 0;
+                for (const name of keys) {
+                    totalSeeded += progress[name].seeded_mb;
+                    totalPending += Math.max(0, progress[name].limit_mb - progress[name].seeded_mb);
+                }
+                const seededGb = +(totalSeeded / 1024).toFixed(2);
+                const pendingGb = +(totalPending / 1024).toFixed(2);
+
+                if (progressChart) {
+                    progressChart.data.datasets[0].data = [seededGb, pendingGb];
+                    progressChart.update('none');
+                } else {
+                    const ctx = document.getElementById('progressChart').getContext('2d');
+                    progressChart = new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Seeded (GB)', 'Pending (GB)'],
+                            datasets: [{
+                                data: [seededGb, pendingGb],
+                                backgroundColor: ['#4caf50', '#0f3460'],
+                                borderColor: ['#66bb6a', '#1a1a4e'],
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            cutout: '78%',
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: { color: '#ccc', padding: 20 }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: ctx => `${ctx.label}: ${ctx.raw} GB`
+                                    }
+                                }
+                            }
+                        },
+                        plugins: [{
+                            id: 'centerText',
+                            beforeDraw(chart) {
+                                const { ctx, chartArea } = chart;
+                                const cx = (chartArea.left + chartArea.right) / 2;
+                                const cy = (chartArea.top + chartArea.bottom) / 2;
+                                ctx.save();
+                                ctx.font = 'bold 18px -apple-system, sans-serif';
+                                ctx.fillStyle = '#e0e0e0';
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
+                                const total = (seededGb + pendingGb).toFixed(1);
+                                const pct = total > 0 ? ((seededGb / total) * 100).toFixed(1) : 0;
+                                ctx.fillText(`${pct}%`, cx, cy - 10);
+                                ctx.font = '12px -apple-system, sans-serif';
+                                ctx.fillStyle = '#999';
+                                ctx.fillText(`${seededGb} / ${total} GB`, cx, cy + 12);
+                                ctx.restore();
+                            }
+                        }]
+                    });
+                }
+            }).catch(() => {});
+        }
+
+        refreshTorrents();
+        refreshProgress();
+        refreshChart();
+        setInterval(() => { refreshTorrents(); refreshProgress(); refreshChart(); }, 2000);
+    </script>
+</body>
+</html>
